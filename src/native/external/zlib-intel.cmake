@@ -21,7 +21,7 @@ set(ZLIB_SOURCES_BASE
     trees.c
     x86.c
     zutil.c
-    dotnet_allocator_win.c
+    ../zlib/dotnet_allocator_win.c
 )
 
 addprefix(ZLIB_SOURCES "${CMAKE_CURRENT_LIST_DIR}/zlib-intel"  "${ZLIB_SOURCES_BASE}")
