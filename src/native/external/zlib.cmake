@@ -1,6 +1,5 @@
 if(MSVC)
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/wd4244>) # conversion from 'type1' to 'type2', possible loss of data
-    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/DMY_ZCALLOC>) # because we're using a custom allocator
 else(CMAKE_C_COMPILER_ID MATCHES "Clang")
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-Wno-implicit-int-conversion>)
 endif()
@@ -28,7 +27,14 @@ set(ZLIB_SOURCES_BASE
     zconf.h
     zlib.h
     zutil.h
-    dotnet_allocator_win.c
 )
+
+if(MSVC)
+    set(ZLIB_SOURCES_BASE ${ZLIB_SOURCES_BASE} dotnet_allocator_win.c)
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/DMY_ZCALLOC>) # because we're using a custom allocator
+else()
+    set(ZLIB_SOURCES_BASE ${ZLIB_SOURCES_BASE} dotnet_allocator_unix.c)
+    add_definitions(-DMY_ZCALLOC)
+endif()
 
 addprefix(ZLIB_SOURCES "${CMAKE_CURRENT_LIST_DIR}/zlib"  "${ZLIB_SOURCES_BASE}")

@@ -7,6 +7,30 @@
 #include <winnt.h>
 #include "zutil.h"
 
+/* A custom allocator for zlib that provides some defense-in-depth over standard malloc / free.
+ * (Windows-specific version)
+ *
+ * 1. In 64-bit processes, we use a custom heap rather than relying on the standard process heap.
+ *    This should cause zlib's buffers to go into a separate address range from the rest of app
+ *    data, making it more difficult for buffer overruns to affect non-zlib-related data structures.
+ *
+ * 2. When zlib allocates fixed-length data structures for containing stream metadata, we zero
+ *    the memory before using it, preventing use of uninitialized memory within these structures.
+ *    Ideally we would do this for dynamically-sized buffers as well, but there is a measurable
+ *    perf impact to doing this. Zeroing fixed structures seems like a good trade-off here, since
+ *    these data structures contain most of the metadata used for managing the variable-length
+ *    dynamically allocated buffers.
+ *
+ * 3. We put a cookie both before and after any allocated memory, which allows us to detect local
+ *    buffer overruns on the call to free(). The cookie values are enciphered to make it more
+ *    difficult for somebody to guess a correct value.
+ *
+ * 4. We trash the aforementioned cookie on free(), which allows us to detect double-free.
+ *
+ * If any of these checks fails, the application terminates immediately, optionally triggering a
+ * crash dump. We use a special code that's easy to search for in Watson.
+ */
+
 // Gets the special heap we'll allocate from.
 HANDLE GetZlibHeap()
 {
