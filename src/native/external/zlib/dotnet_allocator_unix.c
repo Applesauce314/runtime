@@ -49,16 +49,28 @@ typedef struct _DOTNET_ALLOC_COOKIE
     size_t Size;
 } DOTNET_ALLOC_COOKIE;
 
-BOOL SafeAdd(size_t a, size_t b, size_t* sum)
+static BOOL SafeAdd(size_t a, size_t b, size_t* sum)
 {
     if (SIZE_MAX - a >= b) { *sum = a + b; return TRUE; }
     else { *sum = 0; return FALSE; }
 }
 
-BOOL SafeMult(size_t a, size_t b, size_t* product)
+static BOOL SafeMult(size_t a, size_t b, size_t* product)
 {
     if (SIZE_MAX / a >= b) { *product = a * b; return TRUE; }
     else { *product = 0; return FALSE; }
+}
+
+static DOTNET_ALLOC_COOKIE ReadAllocCookieUnaligned(const void* pSrc)
+{
+    DOTNET_ALLOC_COOKIE vCookie;
+    memcpy(&vCookie, pSrc, sizeof(DOTNET_ALLOC_COOKIE));
+    return vCookie;
+}
+
+static void WriteAllocCookieUnaligned(void* pDest, DOTNET_ALLOC_COOKIE vCookie)
+{
+    memcpy(pDest, &vCookie, sizeof(DOTNET_ALLOC_COOKIE));
 }
 
 // Historically, the Windows memory allocator always returns addresses aligned to some
@@ -96,23 +108,24 @@ voidpf ZLIB_INTERNAL zcalloc (opaque, items, size)
     void* pAlloced = (fZeroMemory) ? calloc(1, cbActualAllocationSize) : malloc(cbActualAllocationSize);
     if (pAlloced == NULL) { return NULL; } // OOM
 
-    // Now set the header & trailer cookies
     DOTNET_ALLOC_COOKIE* pHeaderCookie = (DOTNET_ALLOC_COOKIE*)pAlloced;
-    pHeaderCookie->Address = (void*)&pHeaderCookie->Address;
-    pHeaderCookie->Size = cbRequested;
+    BYTE* pReturnToCaller = (BYTE*)pAlloced + DOTNET_ALLOC_HEADER_COOKIE_SIZE_WITH_PADDING;
+    BYTE* pTrailerCookie = pReturnToCaller + cbRequested;
 
-    BYTE* pReturnToCaller = (BYTE*)pHeaderCookie + DOTNET_ALLOC_HEADER_COOKIE_SIZE_WITH_PADDING;
+    // Write out the same cookie for the header & the trailer, then we're done.
 
-    __unaligned DOTNET_ALLOC_COOKIE* pTrailerCookie = (__unaligned DOTNET_ALLOC_COOKIE*)(pReturnToCaller + cbRequested);
-    pTrailerCookie->Address = (void*)&pTrailerCookie->Address;
-    pTrailerCookie->Size = cbRequested;
+    DOTNET_ALLOC_COOKIE vCookie = { 0 };
+    vCookie.Address = pReturnToCaller;
+    vCookie.Size = cbRequested;
+    *pHeaderCookie = vCookie; // aligned
+    WriteAllocCookieUnaligned(pTrailerCookie, vCookie);
 
     return pReturnToCaller;
 }
 
-void zcfree_trash_cookie(__unaligned DOTNET_ALLOC_COOKIE* pCookie)
+static void zcfree_trash_cookie(void* pCookie)
 {
-    memset((void*)pCookie, 0, sizeof(*pCookie));
+    memset(pCookie, 0, sizeof(DOTNET_ALLOC_COOKIE));
 }
 
 void ZLIB_INTERNAL zcfree (opaque, ptr)
@@ -123,15 +136,18 @@ void ZLIB_INTERNAL zcfree (opaque, ptr)
 
     if (ptr == NULL) { return; } // ok to free nullptr
 
-    // Check cookie at beginning and end
+    // Check cookie at beginning
 
     DOTNET_ALLOC_COOKIE* pHeaderCookie = (DOTNET_ALLOC_COOKIE*)((BYTE*)ptr - DOTNET_ALLOC_HEADER_COOKIE_SIZE_WITH_PADDING);
-    if (pHeaderCookie->Address != &pHeaderCookie->Address) { goto Fail; }
+    if (pHeaderCookie->Address != ptr) { goto Fail; }
     size_t cbRequested = pHeaderCookie->Size;
 
-    __unaligned DOTNET_ALLOC_COOKIE* pTrailerCookie = (__unaligned DOTNET_ALLOC_COOKIE*)((BYTE*)ptr + cbRequested);
-    if (pTrailerCookie->Address != &pTrailerCookie->Address) { goto Fail; }
-    if (pTrailerCookie->Size != cbRequested) { goto Fail; }
+    // Check cookie at end
+
+    BYTE* pTrailerCookie = (BYTE*)ptr + cbRequested;
+    DOTNET_ALLOC_COOKIE vTrailerCookie = ReadAllocCookieUnaligned(pTrailerCookie);
+    if (vTrailerCookie.Address != ptr) { goto Fail; }
+    if (vTrailerCookie.Size != cbRequested) { goto Fail; }
 
     // Checks passed - now trash the cookies and free memory
 
