@@ -90,12 +90,12 @@ voidpf ZLIB_INTERNAL zcalloc (opaque, items, size)
     else
     {
         // multiplication can overflow; go through safeint
-        if (FAILED(SizeTMult(items, size, &cbRequested))) { return NULL; }
+        if (FAILED(SIZETMult(items, size, &cbRequested))) { return NULL; }
     }
 
     // Make sure the actual allocation has enough room for our frontside & backside cookies.
     SIZE_T cbActualAllocationSize;
-    if (FAILED(SizeTAdd(cbRequested, DOTNET_ALLOC_HEADER_COOKIE_SIZE_WITH_PADDING + DOTNET_ALLOC_TRAILER_COOKIE_SIZE, &cbActualAllocationSize))) { return NULL; }
+    if (FAILED(SIZETAdd(cbRequested, DOTNET_ALLOC_HEADER_COOKIE_SIZE_WITH_PADDING + DOTNET_ALLOC_TRAILER_COOKIE_SIZE, &cbActualAllocationSize))) { return NULL; }
 
     LPVOID pAlloced = HeapAlloc(GetZlibHeap(), dwFlags, cbActualAllocationSize);
     if (pAlloced == NULL) { return NULL; } // OOM
